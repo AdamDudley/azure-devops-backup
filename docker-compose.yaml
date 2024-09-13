@@ -4,6 +4,9 @@ services:
     build: .
     container_name: git-backup
     environment:
+      # Debug mode or not when in debug mode we need to expose the port and we can attach a debugger to the container
+      - DEBUG_MODE=${DEBUG_MODE:-0}
+      - COPY_ARCHIVES_TO_SHAREPOINT_ENABLED=${COPY_ARCHIVES_TO_SHAREPOINT_ENABLED:-1}
       # Auth DevOps
       - DEVOPS_PAT=${DEVOPS_PAT}
       - DEVOPS_ORGANIZATION_URL=${DEVOPS_ORGANIZATION_URL}
@@ -17,10 +20,29 @@ services:
       # Paths
       - PATH_CLONE=/mnt/backup/clone
       - PATH_ARCHIVE=/mnt/backup/archive
+    # volumes:
+    #   - ./app:/usr/src/app
+    #   - ./tmp:/mnt/backup
+    #   - ./tests:/usr/src/tests
     volumes:
-      - ./app:/usr/src/app
-      - ./tmp:/mnt/backup
-      - ./tests:/usr/src/tests
-    # stdin_open: true
-    # tty: true
-    # command: tail -f /dev/null
+    - ${PWD}/app:/usr/src/app
+    - ${PWD}/tmp2:/mnt/backup
+    - ${PWD}/tests:/usr/src/tests
+    # volumes:
+    #   - "C:/Users/adudley/OneDrive - Gratte Brothers Ltd/dev/AzureBackup/azure-devops-backup/app:/usr/src/app"
+    #   - "C:/temp/azbackuptemp:/mnt/backup"
+    #   - "C:/Users/adudley/OneDrive - Gratte Brothers Ltd/dev/AzureBackup/azure-devops-backup/tests:/usr/src/tests"
+    # only have the below to run the container in detached mode debugging etc.
+    # and then use this to make it 'run' 
+    # TERMINAL: docker-compose --env-file ./configs/test.env up --build -d
+    # TERMINAL: docker exec -it git-backup sh
+    # TERMINAL: python main.py
+    # then nvaigate inside the container and run the app python /usr/src/app/main.py
+    stdin_open: true
+    tty: true
+    command: tail -f /dev/null
+    # to debug the app inside the container - we need this port exposed
+    # TERMINAL: docker exec -it git-backup sh
+    # TERMINAL: python -m debugpy --listen 0.0.0.0:5678 /usr/src/app/main.py
+    ports:
+      - "5678:5678"

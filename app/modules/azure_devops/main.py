@@ -1,6 +1,7 @@
 from azure.devops.released.core.core_client import CoreClient
 from azure.devops.released.git.git_client import GitClient
 from azure.devops.released.wiki.wiki_client import WikiClient
+from azure.devops.released.tfvc.tfvc_client import TfvcClient
 from azure.devops.connection import Connection
 from msrest.authentication import BasicAuthentication
 
@@ -12,21 +13,18 @@ class AzureDevops:
         self.__core_client: CoreClient = connection.clients.get_core_client()
         self.__git_client: GitClient = connection.clients.get_git_client()
         self.__wiki_client: WikiClient = connection.clients.get_wiki_client()
+        self.__tfvc_client: TfvcClient = connection.clients.get_tfvc_client()
 
     def list_projects_name(self) -> set:
-        response = self.__core_client.get_projects()
-
+        projects = self.__core_client.get_projects()
+        print(f"Projects: {projects}")
+        print(f"Projects type: {type(projects)}")
+        
         result = set()
-        while response is not None:
-            for project in response.value:
-                # Add project name to result set
-                result.add(project.name)
-            if response.continuation_token is not None and response.continuation_token != "":
-                # Get the next page of projects
-                response = self.__core_client.get_projects(continuation_token=response.continuation_token)
-            else:
-                # All projects have been retrieved
-                response = None
+        for project in projects:
+            # Add project name to result set
+            result.add(project.name)
+            print(f"Project ID: {project.id}, Name: {project.name}")
 
         return result
 
@@ -55,4 +53,21 @@ class AzureDevops:
                 'ssh_url': repo.ssh_url
             })
 
+        return result
+
+    def list_project_tfs_repos(self, project_name: str) -> list:
+        # Get the project ID first
+        project = self.__core_client.get_project(project_name)
+        
+        # Fetch TFVC repositories
+        tfvc_items = self.__tfvc_client.get_items(project.id, recursion_level='Full')
+        
+        result = []
+        if tfvc_items:
+            result.append({
+                'name': project_name,  # TFVC typically has one repo per project
+                'url': "ignore for now we cant get it",
+                'project': project_name
+            })
+        
         return result

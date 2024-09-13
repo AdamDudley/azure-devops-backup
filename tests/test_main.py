@@ -13,7 +13,7 @@ from app import main as app
 def test__main__success(get_env_vars, sync_data, archive_changes, upload_changes_to_sharepoint):
     """Check Main to complete with exit code 0 (success)"""
 
-    get_env_vars.return_value = ("", "", "", "", "", "", "", "")
+    get_env_vars.return_value = ("", "", "", "", "", "", "", "", "", "1")  # Add "1" at the end
     sync_data.return_value = set()
     archive_changes.return_value = None
     upload_changes_to_sharepoint.return_value = None
@@ -34,7 +34,7 @@ def test__main__success(get_env_vars, sync_data, archive_changes, upload_changes
 def test__main__fail(upload_changes_to_sharepoint, archive_changes, sync_data, get_env_vars):
     """Check Main to complete with exit code 1 (fail)"""
 
-    get_env_vars.return_value = ("", "", "", "", "", "", "", "")
+    get_env_vars.return_value = ("", "", "", "", "", "", "", "", "", "1")  # Add "1" at the end
     sync_data.return_value = set()
     archive_changes.return_value = None
     upload_changes_to_sharepoint.return_value = None
@@ -63,16 +63,22 @@ def test__get_env_vars__success():
     os.environ['SHAREPOINT_DIR'] = "SHAREPOINT_DIR"
     os.environ['SHAREPOINT_CLIENT_ID'] = "SHAREPOINT_CLIENT_ID"
     os.environ['SHAREPOINT_CLIENT_SECRET'] = "SHAREPOINT_CLIENT_SECRET"
+    os.environ['DEBUG_MODE'] = "0"  # Add this line
+    os.environ['COPY_ARCHIVES_TO_SHAREPOINT_ENABLED'] = "1"  # Add this line
 
     # Check return
-    assert app.get_env_vars() == ("DEVOPS_PAT", "DEVOPS_ORGANIZATION_URL", "PATH_CLONE", "PATH_ARCHIVE", "SHAREPOINT_URL", "SHAREPOINT_DIR", "SHAREPOINT_CLIENT_ID", "SHAREPOINT_CLIENT_SECRET")
+    assert app.get_env_vars() == ("DEVOPS_PAT", "DEVOPS_ORGANIZATION_URL", "PATH_CLONE", "PATH_ARCHIVE", 
+                                  "SHAREPOINT_URL", "SHAREPOINT_DIR", "SHAREPOINT_CLIENT_ID", 
+                                  "SHAREPOINT_CLIENT_SECRET", "0", "1")  # Add "1" at the end
 
 
 def test__get_env_vars__fail():
     """Check if Exception is raised when ENV Variable is missing"""
 
     # Delete env variables if are present
-    for env_name in ['DEVOPS_PAT', 'DEVOPS_ORGANIZATION_URL', 'PATH_CLONE', 'PATH_ARCHIVE', 'SHAREPOINT_URL', 'SHAREPOINT_DIR', 'SHAREPOINT_CLIENT_ID', 'SHAREPOINT_CLIENT_SECRET']:
+    for env_name in ['DEVOPS_PAT', 'DEVOPS_ORGANIZATION_URL', 'PATH_CLONE', 'PATH_ARCHIVE', 
+                     'SHAREPOINT_URL', 'SHAREPOINT_DIR', 'SHAREPOINT_CLIENT_ID', 
+                     'SHAREPOINT_CLIENT_SECRET', 'DEBUG_MODE', 'COPY_ARCHIVES_TO_SHAREPOINT_ENABLED']:  # Add 'COPY_ARCHIVES_TO_SHAREPOINT_ENABLED' to this list
         if env_name in os.environ:
             del os.environ[env_name]
 
@@ -260,3 +266,6 @@ def test__upload_changes_to_sharepoint__has_archives(sharepoint_init, sharepoint
     assert sharepoint_ensure_dir_exists.call_count == 2
     assert sharepoint_upload_file.call_count == 5
     assert clean_archive_path.call_count == 1
+
+
+
