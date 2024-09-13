@@ -2,26 +2,30 @@
 """
 Azure DevOps Backup
 
-Solution to extract & transport data from Azure DevOps (SaaS) 
-into external file storage (SharePoint)
+Solution to extract & transport data from Azure DevOps
+into local file storage.
 
 Script should run as CronJob with no-concurency policy,
-suitable to run in container, requires persistent volume.
+suitable to run in container, requires persistent volume mappings.
 """
 
-__author__ = "MICHAL53Q@gmail.com"
-__version__ = "0.1.0"
-__license__ = "MIT"
+__author__ = "adam@thedudleys.co.uk"
+__version__ = "0.2.0"
+__license__ = "AGPLv3"
 
 import os
 import sys
 import shutil
+import debugpy
+import time
+from datetime import datetime, timedelta
 
 from logzero import logger
 
 from app.modules.azure_devops.main import AzureDevops
 from app.modules.git.main import Git
 from app.modules.sharepoint.main import SharePoint
+from app.modules.tfs.main import Tfs
 
 
 def set_exit_code(value: int) -> None:
@@ -85,10 +89,18 @@ def get_env_vars() -> tuple:
         sharepoint_dir = os.environ['SHAREPOINT_DIR']
         sharepoint_client_id = os.environ['SHAREPOINT_CLIENT_ID']
         sharepoint_client_secret = os.environ['SHAREPOINT_CLIENT_SECRET']
+        debug_mode = os.environ.get('DEBUG_MODE', '0')  # Default to '0' if not set
+        copy_archives_to_sharepoint_enabled = os.environ.get('COPY_ARCHIVES_TO_SHAREPOINT_ENABLED', '1')  # Default to '1' if not set
     except KeyError as exception:
         raise Exception(f"Missing ENV Variable: {exception}")
 
-    return devops_pat, devops_org_url, path_clone, path_archive, sharepoint_url, sharepoint_dir, sharepoint_client_id, sharepoint_client_secret
+    return devops_pat, devops_org_url, path_clone, path_archive, sharepoint_url, sharepoint_dir, sharepoint_client_id, sharepoint_client_secret, debug_mode, copy_archives_to_sharepoint_enabled
+
+def backup_needs_update(zip_path, max_age_days=10):
+    if not os.path.exists(zip_path):
+        return True
+    file_age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(zip_path))
+    return file_age >= timedelta(days=max_age_days)
 
 
 def sync_data(devops_pat: str, devops_org_url, path_clone: str) -> set:
@@ -119,7 +131,7 @@ def sync_data(devops_pat: str, devops_org_url, path_clone: str) -> set:
                 set_exit_code(1)
                 continue
 
-        # Sync project wikis
+        # # Sync project wikis
         for wiki in devops.list_project_wikis(project_name):
             try:
                 wiki_name = wiki['name']
@@ -135,17 +147,50 @@ def sync_data(devops_pat: str, devops_org_url, path_clone: str) -> set:
                 set_exit_code(1)
                 continue
 
+        # Sync project TFS repos
+        tfs_repos = devops.list_project_tfs_repos(project_name)
+        if tfs_repos:
+            try:
+                tfs = Tfs(organization_url=devops_org_url, personal_access_token=devops_pat)
+                zip_path = f"{path_clone}/{project_name}/tfs_repo_backup.zip"
+                
+                # Ensure the directory exists
+                os.makedirs(os.path.dirname(zip_path), exist_ok=True)
+                
+                if backup_needs_update(zip_path):
+                    # Download the project as a zip
+                    tfs.download_repo_zip(project_name, zip_path)
+                    logger.info(f"sync_data | downloaded TFS repo | project: {project_name} | zip_path: {zip_path}")
+                    changes.add(f"{project_name}/tfs_repo_backup.zip")
+                else:
+                    logger.info(f"sync_data | skipping TFS repo download, recent backup exists | project: {project_name} | zip_path: {zip_path}")
+            except Exception as exception:
+                logger.error(f"sync_data | downloading TFS repo | project: {project_name} | exception: {exception}")
+                if os.path.exists(zip_path):
+                    os.remove(zip_path)
+                    logger.warning(f"sync_data | deleted partially downloaded TFS repo zip | project: {project_name} | zip_path: {zip_path}")
+                set_exit_code(1)
+            
     return changes
 
 
 def archive_changes(path_clone: str, path_archive: str, changes: set):
     if len(changes) == 0:
-        logger.info(f"archive_changes | no changes detected")
+        logger.info("archive_changes | no changes detected")
         return
 
     for change in changes:
-        logger.info(f"archive_changes | archiving changes: {change}.zip")
-        shutil.make_archive(f"{path_archive}/{change}", 'zip', f"{path_clone}/{change}")
+        if change.endswith('.zip'):
+            # For already zipped files, just copy them
+            source_path = f"{path_clone}/{change}"
+            dest_path = f"{path_archive}/{change}"
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)  # Ensure the destination directory exists
+            logger.info(f"archive_changes | copying zipped file: {change}")
+            shutil.copy2(source_path, dest_path)
+        else:
+            # For unzipped changes, create a zip archive
+            logger.info(f"archive_changes | archiving changes: {change}.zip")
+            shutil.make_archive(f"{path_archive}/{change}", 'zip', f"{path_clone}/{change}")
 
 
 def upload_changes_to_sharepoint(sharepoint_url: str, sharepoint_client_id: str, sharepoint_client_secret: str, path_archive: str, sharepoint_dir: str):
@@ -178,7 +223,15 @@ def upload_changes_to_sharepoint(sharepoint_url: str, sharepoint_client_id: str,
 
 def main():
     # Get ENV Variables
-    devops_pat, devops_org_url, path_clone, path_archive, sharepoint_url, sharepoint_dir, sharepoint_client_id, sharepoint_client_secret = get_env_vars()
+    devops_pat, devops_org_url, path_clone, path_archive, sharepoint_url, sharepoint_dir, sharepoint_client_id, sharepoint_client_secret, debug_mode, copy_archives_to_sharepoint_enabled = get_env_vars()
+
+    # Check for debug mode, if we are we'll wait for the debugger to attach
+    # in VS code, CTRL+SHIFT+D, click play next to 'Python Debugger: Remote Attach'
+    if debug_mode == '1':
+        print("Debug mode is on. Waiting for debugger to attach...")
+        debugpy.listen(("0.0.0.0", 5678))
+        debugpy.wait_for_client()
+        print("Debugger attached!")
 
     # Sync local data with remote
     changes = sync_data(devops_pat, devops_org_url, path_clone)
@@ -186,8 +239,11 @@ def main():
     # Archive changes found during sync
     archive_changes(path_clone, path_archive, changes)
 
-    # Upload archived changes into sharepoint
-    upload_changes_to_sharepoint(sharepoint_url, sharepoint_client_id, sharepoint_client_secret, path_archive, sharepoint_dir)
+    # Upload archived changes into sharepoint if enabled
+    if copy_archives_to_sharepoint_enabled == '1':
+        upload_changes_to_sharepoint(sharepoint_url, sharepoint_client_id, sharepoint_client_secret, path_archive, sharepoint_dir)
+    else:
+        logger.info("Skipping upload to SharePoint as COPY_ARCHIVES_TO_SHAREPOINT_ENABLED is set to '0'")
 
     # Exit script with exit code
     sys.exit(get_exit_code())

@@ -10,7 +10,7 @@ class Git:
         auth_header_base64_bytes = base64.b64encode(auth_header_bytes)
         auth_header_base64 = auth_header_base64_bytes.decode("ascii")
         self.auth_header = f"Authorization: Basic {auth_header_base64}"
-
+        
     def sync(self, remote: str, path: str) -> bool:
         has_changes = False
         if os.path.isdir(path):
@@ -26,7 +26,8 @@ class Git:
             url=remote,
             c=f"http.extraHeader={self.auth_header}",
             to_path=path,
-            mirror=True
+            mirror=True,
+            allow_unsafe_options=True
         )
 
     def __update(self, path: str) -> bool:

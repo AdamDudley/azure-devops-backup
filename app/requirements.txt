@@ -3,3 +3,4 @@ logzero
 requests
 GitPython
 Office365-REST-Python-Client
+debugpy

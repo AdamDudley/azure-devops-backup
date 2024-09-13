@@ -1,2 +1,12 @@
 .pytest_cache
 **/__pycache__
+/tmp/
+/tmp2/
+
+# Ignore all .env files
+*.env
+.env
+env.*
+
+# Except for template.env
+!template.env
