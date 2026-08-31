@@ -10,3 +10,6 @@ env.*
 
 # Except for template.env
 !template.env
+
+# Local virtualenv
+.venv/
