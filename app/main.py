@@ -10,7 +10,7 @@ suitable to run in container, requires persistent volume mappings.
 """
 
 __author__ = "adam@thedudleys.co.uk"
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __license__ = "AGPLv3"
 
 import os
@@ -24,6 +24,7 @@ from logzero import logger
 
 from app.modules.azure_devops.main import AzureDevops
 from app.modules.git.main import Git
+from app.modules.github.main import GitHub
 from app.modules.sharepoint.main import SharePoint
 from app.modules.tfs.main import Tfs
 
@@ -95,6 +96,36 @@ def get_env_vars() -> tuple:
         raise Exception(f"Missing ENV Variable: {exception}")
 
     return devops_pat, devops_org_url, path_clone, path_archive, sharepoint_url, sharepoint_dir, sharepoint_client_id, sharepoint_client_secret, debug_mode, copy_archives_to_sharepoint_enabled
+
+def get_source() -> str:
+    return os.environ.get('SOURCE', 'azure_devops').strip().lower()
+
+
+def get_github_env_vars() -> tuple:
+    try:
+        github_token = os.environ['GITHUB_TOKEN']
+        path_clone = os.environ['PATH_CLONE']
+        path_archive = os.environ['PATH_ARCHIVE']
+    except KeyError as exception:
+        raise Exception(f"Missing ENV Variable: {exception}")
+
+    github_owner = os.environ.get('GITHUB_OWNER', '')
+    repo_filter = {name.strip() for name in os.environ.get('REPO_FILTER', '').split(',') if name.strip()}
+    force_archive = os.environ.get('FORCE_ARCHIVE', '0') == '1'
+    include_forks = os.environ.get('INCLUDE_FORKS', '0') == '1'
+    debug_mode = os.environ.get('DEBUG_MODE', '0')
+    copy_archives_to_sharepoint_enabled = os.environ.get('COPY_ARCHIVES_TO_SHAREPOINT_ENABLED', '0')
+
+    return github_token, github_owner, path_clone, path_archive, repo_filter, force_archive, include_forks, debug_mode, copy_archives_to_sharepoint_enabled
+
+
+def get_sharepoint_env_vars() -> tuple:
+    try:
+        return (os.environ['SHAREPOINT_URL'], os.environ['SHAREPOINT_DIR'],
+                os.environ['SHAREPOINT_CLIENT_ID'], os.environ['SHAREPOINT_CLIENT_SECRET'])
+    except KeyError as exception:
+        raise Exception(f"Missing ENV Variable: {exception}")
+
 
 def backup_needs_update(zip_path, max_age_days=10):
     if not os.path.exists(zip_path):
@@ -174,6 +205,42 @@ def sync_data(devops_pat: str, devops_org_url, path_clone: str) -> set:
     return changes
 
 
+def sync_github_data(github_token: str, github_owner: str, path_clone: str, repo_filter: set = None, force_archive: bool = False, include_forks: bool = False) -> set:
+    github = GitHub(github_token, github_owner)
+    owner = github.owner
+
+    # GitHub accepts any username with a token as the password for basic auth
+    git = Git("x-access-token", github_token)
+
+    repos = github.list_repos()
+    if not include_forks:
+        # Forks are somebody else's work; skip them unless explicitly asked for
+        repos = [repo for repo in repos if not repo.get('fork', False)]
+    if repo_filter:
+        available = {repo['name'] for repo in repos}
+        for missing in sorted(repo_filter - available):
+            logger.error(f"sync_github_data | repo in REPO_FILTER not found | owner: {owner} | repo: {missing}")
+            set_exit_code(1)
+        repos = [repo for repo in repos if repo['name'] in repo_filter]
+
+    changes = set()
+    for repo in repos:
+        repo_name = repo['name']
+        key = f"github/{owner}/git/{repo_name}"
+        try:
+            has_changes = git.sync(repo['remote_url'], f"{path_clone}/{key}")
+            if has_changes or force_archive:
+                changes.add(key)
+
+            logger.info(f"sync_github_data | syncing repos | owner: {owner} | repo: {repo_name} | has_changes: {has_changes}")
+        except Exception as exception:
+            logger.error(f"sync_github_data | syncing repos | owner: {owner} | repo: {repo_name} | exception: {exception}")
+            set_exit_code(1)
+            continue
+
+    return changes
+
+
 def archive_changes(path_clone: str, path_archive: str, changes: set):
     if len(changes) == 0:
         logger.info("archive_changes | no changes detected")
@@ -221,10 +288,7 @@ def upload_changes_to_sharepoint(sharepoint_url: str, sharepoint_client_id: str,
     clean_archive_path(path_archive)
 
 
-def main():
-    # Get ENV Variables
-    devops_pat, devops_org_url, path_clone, path_archive, sharepoint_url, sharepoint_dir, sharepoint_client_id, sharepoint_client_secret, debug_mode, copy_archives_to_sharepoint_enabled = get_env_vars()
-
+def wait_for_debugger(debug_mode: str) -> None:
     # Check for debug mode, if we are we'll wait for the debugger to attach
     # in VS code, CTRL+SHIFT+D, click play next to 'Python Debugger: Remote Attach'
     if debug_mode == '1':
@@ -233,17 +297,35 @@ def main():
         debugpy.wait_for_client()
         print("Debugger attached!")
 
-    # Sync local data with remote
-    changes = sync_data(devops_pat, devops_org_url, path_clone)
+
+def main():
+    source = get_source()
+
+    if source == 'github':
+        github_token, github_owner, path_clone, path_archive, repo_filter, force_archive, include_forks, debug_mode, copy_archives_to_sharepoint_enabled = get_github_env_vars()
+        wait_for_debugger(debug_mode)
+
+        # Sync local data with remote
+        changes = sync_github_data(github_token, github_owner, path_clone, repo_filter, force_archive, include_forks)
+    elif source == 'azure_devops':
+        # Get ENV Variables
+        devops_pat, devops_org_url, path_clone, path_archive, sharepoint_url, sharepoint_dir, sharepoint_client_id, sharepoint_client_secret, debug_mode, copy_archives_to_sharepoint_enabled = get_env_vars()
+        wait_for_debugger(debug_mode)
+
+        # Sync local data with remote
+        changes = sync_data(devops_pat, devops_org_url, path_clone)
+    else:
+        raise Exception(f"Unknown SOURCE: {source} (expected 'github' or 'azure_devops')")
 
     # Archive changes found during sync
     archive_changes(path_clone, path_archive, changes)
 
     # Upload archived changes into sharepoint if enabled
     if copy_archives_to_sharepoint_enabled == '1':
+        sharepoint_url, sharepoint_dir, sharepoint_client_id, sharepoint_client_secret = get_sharepoint_env_vars()
         upload_changes_to_sharepoint(sharepoint_url, sharepoint_client_id, sharepoint_client_secret, path_archive, sharepoint_dir)
     else:
-        logger.info("Skipping upload to SharePoint as COPY_ARCHIVES_TO_SHAREPOINT_ENABLED is set to '0'")
+        logger.info(f"Skipping upload to SharePoint as COPY_ARCHIVES_TO_SHAREPOINT_ENABLED is not '1' | archives kept in: {path_archive}")
 
     # Exit script with exit code
     sys.exit(get_exit_code())
