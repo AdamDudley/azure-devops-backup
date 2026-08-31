@@ -1,46 +1,42 @@
-version: '3'
 services:
   git-backup:
     build: .
     container_name: git-backup
     environment:
-      # Debug mode or not when in debug mode we need to expose the port and we can attach a debugger to the container
-      - DEBUG_MODE=${DEBUG_MODE:-0}
-      - COPY_ARCHIVES_TO_SHAREPOINT_ENABLED=${COPY_ARCHIVES_TO_SHAREPOINT_ENABLED:-1}
-      # Auth DevOps
-      - DEVOPS_PAT=${DEVOPS_PAT}
-      - DEVOPS_ORGANIZATION_URL=${DEVOPS_ORGANIZATION_URL}
+      # Which backend to back up: github | azure_devops
+      - SOURCE=${SOURCE:-github}
 
-      # Auth SharePoint
-      - SHAREPOINT_URL=${SHAREPOINT_URL}
-      - SHAREPOINT_DIR=${SHAREPOINT_DIR}
-      - SHAREPOINT_CLIENT_ID=${SHAREPOINT_CLIENT_ID}
-      - SHAREPOINT_CLIENT_SECRET=${SHAREPOINT_CLIENT_SECRET}
-      
-      # Paths
+      # GitHub (SOURCE=github)
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GITHUB_OWNER=${GITHUB_OWNER:-}
+      - REPO_FILTER=${REPO_FILTER:-}
+      - INCLUDE_FORKS=${INCLUDE_FORKS:-0}
+      - FORCE_ARCHIVE=${FORCE_ARCHIVE:-0}
+
+      # Azure DevOps (SOURCE=azure_devops)
+      - DEVOPS_PAT=${DEVOPS_PAT:-}
+      - DEVOPS_ORGANIZATION_URL=${DEVOPS_ORGANIZATION_URL:-}
+
+      # SharePoint upload (off by default; set to 1 and fill in the SHAREPOINT_* vars)
+      - COPY_ARCHIVES_TO_SHAREPOINT_ENABLED=${COPY_ARCHIVES_TO_SHAREPOINT_ENABLED:-0}
+      - SHAREPOINT_URL=${SHAREPOINT_URL:-}
+      - SHAREPOINT_DIR=${SHAREPOINT_DIR:-}
+      - SHAREPOINT_CLIENT_ID=${SHAREPOINT_CLIENT_ID:-}
+      - SHAREPOINT_CLIENT_SECRET=${SHAREPOINT_CLIENT_SECRET:-}
+
+      # Paths inside the container (mapped to ./tmp below)
       - PATH_CLONE=/mnt/backup/clone
       - PATH_ARCHIVE=/mnt/backup/archive
-    # volumes:
-    #   - ./app:/usr/src/app
-    #   - ./tmp:/mnt/backup
-    #   - ./tests:/usr/src/tests
+
+      # Set DEBUG_MODE=1 and attach VS Code's "Python Debugger: Remote Attach" on port 5678
+      - DEBUG_MODE=${DEBUG_MODE:-0}
     volumes:
-    - ${PWD}/app:/usr/src/app
-    - ${PWD}/tmp2:/mnt/backup
-    - ${PWD}/tests:/usr/src/tests
-    # volumes:
-    #   - "C:/temp/azbackuptemp:/mnt/backup"
-    # only have the below to run the container in detached mode debugging etc.
-    # and then use this to make it 'run' 
-    # TERMINAL: docker-compose --env-file ./configs/test.env up --build -d
-    # TERMINAL: docker exec -it git-backup sh
-    # TERMINAL: python main.py
-    # then nvaigate inside the container and run the app python /usr/src/app/main.py
-    stdin_open: true
-    tty: true
-    command: tail -f /dev/null
-    # to debug the app inside the container - we need this port exposed
-    # TERMINAL: docker exec -it git-backup sh
-    # TERMINAL: python -m debugpy --listen 0.0.0.0:5678 /usr/src/app/main.py
+      - ./tmp:/mnt/backup
     ports:
       - "5678:5678"
+    # To poke around inside the container instead of running the backup:
+    #   uncomment the next three lines, then
+    #   docker compose --env-file ./configs/github.env up --build -d && docker exec -it git-backup sh
+    # stdin_open: true
+    # tty: true
+    # command: tail -f /dev/null

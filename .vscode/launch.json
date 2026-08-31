@@ -1,11 +1,22 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Remote Attach",
+            "name": "Backup GitHub repos (local)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/app/main.py",
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/configs/github.env",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}",
+                "SOURCE": "github",
+                "PATH_CLONE": "${workspaceFolder}/tmp/clone",
+                "PATH_ARCHIVE": "${workspaceFolder}/tmp/archive"
+            }
+        },
+        {
+            "name": "Python Debugger: Remote Attach (container)",
             "type": "debugpy",
             "request": "attach",
             "connect": {

@@ -1,114 +1,104 @@
-# Azure DevOps Backup
+# Git Repo Backup (GitHub / Azure DevOps)
 
-Solution to extract & transport data from Azure DevOps (SaaS)
-into external file storage (SharePoint)
+Mirrors every git repo you own into a local folder and packs each one into a
+`.zip` you can restore from if something bad happens. Runs from a `gh`-logged-in
+Mac with one command, or as a container / cron job.
 
-Script should run as CronJob with no-concurency policy,
-suitable to run in container, requires persistent volume.
+Two sources are supported:
 
-Through Azure DevOps REST API application get all Git repos & wikis which are mirrored into file storage.
-If there are incremental changes, they are later packed into .zip files and trasported into external storage (SharePoint)
+- **GitHub** (`SOURCE=github`) — all repos owned by the token's user (private
+  included, forks excluded by default).
+- **Azure DevOps** (`SOURCE=azure_devops`) — every project's git repos, wikis
+  and TFVC snapshot in an organisation. Optional upload to SharePoint.
 
-If non-critical error happen, script will keep running but exit code will be 1,
-if run is without error exit code is 0
+Exit code is `0` on a clean run and `1` if any repo failed (the rest still run).
 
-# Requirements
+## Quick start (GitHub, local Mac)
 
-## Linux container with persitent volume
+```bash
+gh auth login                                   # once; needs the `repo` scope
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 
-Application is running in container with mounted peristent volume as file storage
-
-## Azure DevOps organization
-
-Azure DevOps organization with account PAT Token with following permissions:
-
-| Name        | Permissions |
-| ----------- | ----------- |
-| <b>Wiki</b> | Read        |
-| <b>Code</b> | Read        |
-
-[Azure DevOps PAT Token Docs](https://docs.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate?view=azure-devops&tabs=Windows)
-
-## SharePoint
-
-SharePoint site with App-Only service account with following permissions:
-
-```
-<AppPermissionRequests AllowAppOnlyPolicy="true">
-  <AppPermissionRequest Scope="http://sharepoint/content/tenant" Right="FullControl" />
-</AppPermissionRequests>
+./run-github-backup.sh                          # all your own repos
+REPO_FILTER=ppg ./run-github-backup.sh          # just one
+FORCE_ARCHIVE=1 ./run-github-backup.sh          # re-zip everything, changed or not
 ```
 
-[SharePoint App-Only Docs](https://docs.microsoft.com/en-us/sharepoint/dev/solution-guidance/security-apponly-azureacs)
+Output:
 
-# Configs
+```
+tmp/
+├── clone/github/<owner>/git/<repo>      # bare git mirror (kept between runs, fetched incrementally)
+└── archive/github/<owner>/git/<repo>.zip # zip of the mirror; only rewritten when the repo changed
+```
 
-| Name                     | Example                                        | Description                |
-| ------------------------ | ---------------------------------------------- | -------------------------- |
-| DEVOPS_PAT               | xxxxxxxxxxxxxxxxxxxxxxxxx                      | Azure DevOps PAT Token     |
-| DEVOPS_ORGANIZATION_URL  | https://dev.azure.com/myOrganization           | Azure DevOps URL           |
-| SHAREPOINT_URL           | https://myCompany.sharepoint.com/sites/backups | Full Sharepoint target URL |
-| SHAREPOINT_DIR           | Documents/DevOps                               | Sharepoint Directory name  |
-| SHAREPOINT_CLIENT_ID     | 00000000-0000-0000-0000-000000000000           | Sharepoint Client ID       |
-| SHAREPOINT_CLIENT_SECRET | xxxxxxxxxxxxxxxxxxxxxxxxx                      | Sharepoint Client Secret   |
-| PATH_CLONE               | /mnt/backup/clone                              | Path where store clone     |
-| PATH_ARCHIVE             | /mnt/backup/archive                            | Path where store archives  |
+Restore a zip:
 
-# File structure
+```bash
+unzip ppg.zip -d ppg-bare && git clone ppg-bare ppg
+```
+
+The zip is a bare mirror: every branch, tag and commit is in there.
+
+Settings can also live in `configs/github.env` (gitignored, loaded by the
+script) — see `configs/github.env.example`.
+
+## Configuration
+
+| Name                                | Default            | Description                                                  |
+| ----------------------------------- | ------------------ | ------------------------------------------------------------ |
+| `SOURCE`                            | `azure_devops`     | `github` or `azure_devops` (`run-github-backup.sh` sets `github`) |
+| `PATH_CLONE`                        | —                  | Where git mirrors are kept                                   |
+| `PATH_ARCHIVE`                      | —                  | Where zips are written                                       |
+| `COPY_ARCHIVES_TO_SHAREPOINT_ENABLED` | `1` (azure) / `0` (github) | Upload zips to SharePoint and clear `PATH_ARCHIVE` afterwards |
+| `DEBUG_MODE`                        | `0`                | `1` waits for a debugpy client on port 5678                  |
+| **GitHub**                          |                    |                                                              |
+| `GITHUB_TOKEN`                      | `gh auth token`    | Token with `repo` scope                                      |
+| `GITHUB_OWNER`                      | token's user       | Only back up repos owned by this account                     |
+| `REPO_FILTER`                       | all                | Comma-separated repo names                                   |
+| `INCLUDE_FORKS`                     | `0`                | `1` to include repos you forked                              |
+| `FORCE_ARCHIVE`                     | `0`                | `1` writes a zip for every repo even when unchanged          |
+| **Azure DevOps**                    |                    |                                                              |
+| `DEVOPS_PAT`                        | —                  | PAT with Code: Read, Wiki: Read                              |
+| `DEVOPS_ORGANIZATION_URL`           | —                  | e.g. `https://dev.azure.com/myOrganization`                  |
+| **SharePoint** (only if upload enabled) |                |                                                              |
+| `SHAREPOINT_URL`                    | —                  | e.g. `https://myCompany.sharepoint.com/sites/backups`        |
+| `SHAREPOINT_DIR`                    | —                  | e.g. `Documents/DevOps`                                      |
+| `SHAREPOINT_CLIENT_ID` / `_SECRET`  | —                  | App-only credentials                                         |
+
+## Running in Docker
+
+```bash
+cp configs/github.env.example configs/github.env   # fill in GITHUB_TOKEN
+docker compose --env-file ./configs/github.env up --build
+```
+
+Mirrors and zips land in `./tmp` on the host. Run the tests in the image with
+`docker build --target test .`.
+
+## Development
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+Layout:
 
 ```
 .
-├── app                                 # App folder
-├── configs                             # Contains environment files (for local development)
-│   └── test.env                        # Contains sensitive data which are injected into docker-compose.yaml
-├── tests                               # App tests folder
-└── tmp                                 # Mounted storage for application data
-    ├── archive                         # Contains backup archives (cleaned after every success run)
-    └── clone                           # Contains git mirror data
+├── app/                      # application (app/main.py is the entrypoint)
+│   └── modules/              # github, azure_devops, tfs, git, sharepoint clients
+├── tests/
+├── configs/                  # *.env files (gitignored) + github.env.example
+├── run-github-backup.sh      # local one-shot runner
+└── tmp/                      # mirrors + archives (gitignored)
 ```
 
-# Installation
+## Notes
 
-## Requirements
-
-- Docker running Linux containers (for local development)
-- Service Principal for Azure Key Vault
-- Sharepoint App-Only credentials
-
-## Create configs
-
-### ./configs/test.env
-
-```bash
-cat << EOF > ./configs/test.env
-DEVOPS_PAT=xxxxxxxxxxxxxxxxxxxxxxxxx
-DEVOPS_ORGANIZATION_URL=https://dev.azure.com/organization
-
-SHAREPOINT_URL=https://organization.sharepoint.com/sites/backups
-SHAREPOINT_DIR=Documents/DevOps
-SHAREPOINT_CLIENT_ID=00000000-0000-0000-0000-000000000000
-SHAREPOINT_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxx
-EOF
-```
-
-## Run container
-
-```
-docker-compose --env-file ./configs/test.env up --build
-```
-
-## Run container inactivelly & attach to it
-
-You will need uncomment following section in <i>docker-compose.yaml</i>
-
-```
-    # stdin_open: true
-    # tty: true
-    # command: tail -f /dev/null
-```
-
-and run following command
-
-```
-docker-compose --env-file ./configs/test.env up --build -d && docker exec -it git-backup sh
-```
+- Credentials are passed to git through the environment for each command and
+  are never written into the mirror's config, so zips are safe to store
+  anywhere. Mirrors created by versions before 0.3.0 had the credential in
+  their `config`; the tool removes it on the next run — but any zips produced
+  by those versions should be regenerated (`FORCE_ARCHIVE=1`) and the old ones
+  deleted.

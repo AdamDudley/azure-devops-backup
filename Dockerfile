@@ -1,44 +1,29 @@
-FROM python:3.10-alpine3.16 as test
+FROM python:3.12-alpine AS base
 
-RUN apk add --no-cache \
-    gcc \
-    libc-dev \
-    libffi-dev \
-    git 
+RUN apk add --no-cache git
 
 WORKDIR /usr/src
+ENV PYTHONPATH=/usr/src \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-COPY ./app/requirements.txt ./app/
-
+COPY app/requirements.txt ./app/
 RUN pip install --no-cache-dir -r ./app/requirements.txt
-RUN pip install pytest
-RUN pip install mock
-RUN pip install debugpy
 
-COPY . .
 
-# Debug command to list contents of /usr/src
-# RUN echo "Contents 1 of /usr/src:" && ls -R /usr/src
+# Test stage: `docker build --target test .` runs the suite
+FROM base AS test
 
-#RUN pytest
+COPY requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
 
-FROM python:3.10-alpine3.16 as final
+COPY app ./app
+COPY tests ./tests
+RUN pytest -q
 
-RUN apk add --no-cache \
-    gcc \
-    libc-dev \
-    libffi-dev \
-    git 
 
-WORKDIR /usr/src/app
+FROM base AS final
 
-COPY --from=test /usr/src/app ./
+COPY app ./app
 
-RUN pip install --no-cache-dir -r requirements.txt
-
-ENV PYTHONPATH=/usr/src
-
-# Debug command to list contents of /usr/src
-# RUN echo "Contents 2 of /usr/src:" && ls -R /usr/src
-
-CMD [ "python", "main.py" ]
+CMD [ "python", "app/main.py" ]
